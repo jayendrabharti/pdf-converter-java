@@ -1,107 +1,80 @@
 # PDF to Image Converter API
 
-A high-performance Spring Boot REST API for converting PDF files to high-quality images with advanced PDF repair capabilities.
+High-performance Spring Boot REST API for converting PDF files to images with automatic PDF repair.
 
 ---
 
-## 📋 Table of Contents
+## Features
 
-- [Features](#-features)
-- [Prerequisites](#-prerequisites)
-- [Quick Start](#-quick-start)
-- [API Endpoints](#-api-endpoints)
-- [Configuration](#-configuration)
-- [PDF Repair Tools](#-pdf-repair-tools-optional)
-- [Usage Examples](#-usage-examples)
-- [Docker Support](#-docker-support)
-- [Development](#-development)
-- [Troubleshooting](#-troubleshooting)
-- [Performance](#-performance)
-- [License](#-license)
+- ✅ Convert PDFs to JPG/PNG (50-600 DPI)
+- ✅ 3-tier PDF repair (QPDF → Ghostscript → DPI fallback)
+- ✅ Multi-threaded batch processing
+- ✅ ZIP download of all pages
+- ✅ RESTful API with job tracking
+- ✅ Auto-cleanup after 1 hour
 
 ---
 
-## ✨ Features
+## Quick Start
 
-✅ **High-Quality Conversion** - Convert PDFs to JPG or PNG with configurable DPI (50-600)  
-✅ **PDF Repair** - 3-tier repair strategy for corrupted/problematic PDFs  
-✅ **Job Tracking** - UUID-based job tracking with automatic cleanup  
-✅ **Batch Processing** - Convert multi-page PDFs efficiently  
-✅ **RESTful API** - Simple, intuitive REST endpoints  
-✅ **ZIP Downloads** - Download all pages as a single ZIP file  
-✅ **CORS Enabled** - Ready for frontend integration  
-✅ **File Management** - Automatic cleanup after 1 hour (configurable)  
-✅ **Metadata** - Detailed conversion statistics and file information  
-✅ **Health Checks** - Monitor API status and active jobs  
+### Option 1: Local Development (Java)
 
----
+**Prerequisites:** Java 17+, Maven 3.6+, QPDF, Ghostscript
 
-## 📦 Prerequisites
-
-### Required
-- **Java 17+** - [Download](https://adoptium.net/)
-- **Maven 3.6+** - [Download](https://maven.apache.org/download.cgi)
-
-### Optional (for PDF Repair)
-- **QPDF** - Fast PDF repair ([Installation Guide](SETUP.md#windows-installation))
-- **Ghostscript** - Comprehensive PDF repair ([Installation Guide](SETUP.md#linux-installation))
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone and Build
 ```bash
-git clone <repository-url>
-cd pdf-converter-java
+# Build
 mvn clean package
-```
 
-### 2. Run the API
-```bash
+# Run
 java -jar target/pdf-converter-api.jar
+
+# Access at http://localhost:8080
 ```
-**Or** with Maven:
+
+**Install Repair Tools:**
 ```bash
-mvn spring-boot:run
+# Windows (Chocolatey)
+choco install qpdf ghostscript
+
+# Ubuntu/Debian
+sudo apt-get install qpdf ghostscript
+
+# macOS (Homebrew)
+brew install qpdf ghostscript
 ```
-
-### 3. Verify
-API will be available at: **`http://localhost:8080`**
-
-Test health endpoint:
-```bash
-curl http://localhost:8080/health
-```
-
-📖 **For detailed setup including PDF repair tools, see [SETUP.md](SETUP.md)**
 
 ---
 
-## 🔌 API Endpoints
+### Option 2: Docker (Recommended 🐳)
 
-### 1️⃣ Convert PDF to Images
+**Prerequisites:** Docker only
 
-**POST** `/api/convert`
-
-Upload and convert a PDF file to images.
-
-**Parameters:**
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `pdf` | File | ✅ | PDF file to convert |
-| `dpi` | Integer | ❌ | DPI quality (50-600, default: 150) |
-| `format` | String | ❌ | Output format: `jpg` or `png` (default: jpg) |
-
-**Example Request:**
 ```bash
-curl -X POST http://localhost:8080/api/convert \
-  -F "pdf=@document.pdf" \
-  -F "dpi=300" \
-  -F "format=png"
+# Clone and run
+git clone <repo-url>
+cd pdf-converter-java
+docker-compose up
+
+# Access at http://localhost:8080
 ```
 
-**Success Response (200 OK):**
+**Why Docker?**
+- ✅ QPDF & Ghostscript pre-installed
+- ✅ Works on Windows/Linux/macOS
+- ✅ Zero configuration needed
+- ✅ Production-ready
+
+---
+
+## API Usage
+
+### Convert PDF
+```bash
+curl -F "pdf=@sample.pdf" -F "dpi=300" -F "format=jpg" \
+  http://localhost:8080/api/convert
+```
+
+**Response:**
 ```json
 {
   "jobId": "550e8400-e29b-41d4-a716-446655440000",
@@ -111,274 +84,77 @@ curl -X POST http://localhost:8080/api/convert \
     "successfulPages": 10,
     "failedPages": 0,
     "timeTakenSeconds": 5.2,
-    "dpi": 300,
-    "format": "png",
-    "repairMethod": "none",
-    "files": ["page-001.png", "page-002.png", ...]
+    "repairMethod": "qpdf"
   },
   "downloadUrl": "/api/output/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
----
-
-### 2️⃣ Download Converted Files
-
-**GET** `/api/output/{jobId}`
-
-Download all converted images as a ZIP file.
-
-**Example:**
+### Download Result
 ```bash
-curl -O http://localhost:8080/api/output/550e8400-e29b-41d4-a716-446655440000
+curl -O http://localhost:8080/api/output/{jobId}
+# Downloads ZIP with all images + metadata.json
 ```
 
-**ZIP Contents:**
-- `page-001.{format}`, `page-002.{format}`, ...
-- `metadata.json` - Conversion details
-
----
-
-### 3️⃣ API Help
-
-**GET** `/api/help`
-
-Get detailed API documentation.
-
-```bash
-curl http://localhost:8080/api/help
-```
-
----
-
-### 4️⃣ Health Check
-
-**GET** `/health`
-
-Check API status and active jobs.
-
+### Health Check
 ```bash
 curl http://localhost:8080/health
 ```
 
-**Response:**
-```json
-{
-  "status": "healthy",
-  "activeJobs": 3,
-  "api": "running",
-  "repairTools": {
-    "qpdf": "available",
-    "ghostscript": "available"
-  }
-}
-```
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/convert` | POST | Convert PDF (params: `pdf`, `dpi`, `format`) |
+| `/api/output/{jobId}` | GET | Download converted images as ZIP |
+| `/api/help` | GET | API documentation |
+| `/health` | GET | Health check |
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 Edit `src/main/resources/application.properties`:
 
 ```properties
-# Server Configuration
+# Server
 server.port=8080
 
-# File Upload Limits
+# File Limits
 spring.servlet.multipart.max-file-size=50MB
 spring.servlet.multipart.max-request-size=50MB
 
-# Storage Paths
-app.upload.dir=uploads
-app.output.dir=outputs
-
-# Job Management
+# Job Cleanup
 app.job.expiry-hours=1
 
-# PDF Repair (requires external tools)
+# PDF Repair (paths auto-detected if installed system-wide)
 app.repair.enabled=true
 app.repair.qpdf.path=qpdf
 app.repair.ghostscript.path=gs
-app.repair.timeout-seconds=300
 ```
 
 ---
 
-## 🛠️ PDF Repair Tools (Optional)
+## How PDF Repair Works
 
-Install PDF repair tools for **100% page recovery** with problematic PDFs.
+**3-Tier Fallback Strategy:**
 
-### Quick Install
+1. **PDFBox Direct** → Fast, handles 95% of PDFs
+2. **QPDF Repair** → Fixes corrupted structures (+10s)
+3. **Ghostscript Fallback** → Comprehensive repair (+45s)
+4. **72 DPI Fallback** → Last resort (quality compromise)
 
-**Windows (Chocolatey):**
-```powershell
-choco install qpdf ghostscript
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install qpdf ghostscript
-```
-
-**macOS (Homebrew):**
-```bash
-brew install qpdf ghostscript
-```
-
-📖 **See [SETUP.md](SETUP.md) for detailed installation and configuration**
-
-### Repair Strategy
-1. **Direct conversion** - Fast (0 overhead)
-2. **QPDF repair** - If pages fail (+6-10s)
-3. **Ghostscript fallback** - If QPDF fails (+30-45s)
-
-✅ **Only repairs when needed** - No performance penalty for clean PDFs
+**Only activates when pages fail** - no overhead for clean PDFs.
 
 ---
 
-## 💡 Usage Examples
+## Development
 
-### cURL Examples
-
-**Basic Conversion:**
-```bash
-curl -X POST http://localhost:8080/api/convert \
-  -F "pdf=@sample.pdf"
-```
-
-**High-Quality PNG:**
-```bash
-curl -X POST http://localhost:8080/api/convert \
-  -F "pdf=@document.pdf" \
-  -F "dpi=600" \
-  -F "format=png"
-```
-
-**Download Result:**
-```bash
-curl -O http://localhost:8080/api/output/{jobId}
-```
-
----
-
-### JavaScript/Fetch Example
-
-```javascript
-// Upload and convert
-const formData = new FormData();
-formData.append('pdf', pdfFile); // File from <input type="file">
-formData.append('dpi', '300');
-formData.append('format', 'png');
-
-const response = await fetch('http://localhost:8080/api/convert', {
-  method: 'POST',
-  body: formData
-});
-
-const result = await response.json();
-
-if (result.status === 'success') {
-  console.log(`Converted ${result.metadata.totalPages} pages`);
-  console.log(`Download: ${result.downloadUrl}`);
-  
-  // Trigger download
-  window.location.href = `http://localhost:8080${result.downloadUrl}`;
-} else {
-  console.error('Conversion failed:', result.errors);
-}
-```
-
----
-
-### Python Example
-
-```python
-import requests
-
-# Convert PDF
-with open('document.pdf', 'rb') as pdf_file:
-    files = {'pdf': pdf_file}
-    data = {'dpi': '300', 'format': 'png'}
-    
-    response = requests.post(
-        'http://localhost:8080/api/convert',
-        files=files,
-        data=data
-    )
-    
-    result = response.json()
-    job_id = result['jobId']
-    print(f"Job ID: {job_id}")
-
-# Download result
-download_response = requests.get(
-    f'http://localhost:8080/api/output/{job_id}',
-    stream=True
-)
-
-with open('output.zip', 'wb') as f:
-    for chunk in download_response.iter_content(chunk_size=8192):
-        f.write(chunk)
-```
-
----
-
-## 🐳 Docker Support
-
-### Build Docker Image
-```bash
-docker build -t pdf-converter-api .
-```
-
-### Run Container
-```bash
-docker run -p 8080:8080 pdf-converter-api
-```
-
-### Docker Compose
-```yaml
-version: '3.8'
-services:
-  pdf-converter:
-    build: .
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./uploads:/app/uploads
-      - ./outputs:/app/outputs
-    environment:
-      - SERVER_PORT=8080
-      - APP_REPAIR_ENABLED=true
-```
-
----
-
-## 🔧 Development
-
-### Project Structure
-```
-pdf-converter-java/
-├── src/main/java/com/pdfconverter/
-│   ├── controller/      # REST controllers
-│   ├── service/         # Business logic
-│   ├── config/          # Configuration classes
-│   └── model/           # Response models
-├── src/main/resources/
-│   └── application.properties
-├── pom.xml
-└── README.md
-```
-
-### Build Commands
-
-**Clean build:**
+**Build:**
 ```bash
 mvn clean package
-```
-
-**Skip tests:**
-```bash
-mvn clean package -DskipTests
 ```
 
 **Run locally:**
@@ -386,97 +162,65 @@ mvn clean package -DskipTests
 mvn spring-boot:run
 ```
 
-**Run JAR:**
+**Docker build:**
 ```bash
-java -jar target/pdf-converter-api.jar
+docker-compose up --build
 ```
-
-### Output Location
-- **JAR file:** `target/pdf-converter-api.jar`
-- **Uploads:** `uploads/{jobId}/`
-- **Outputs:** `outputs/{jobId}/`
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Common Issues
+**"Failed to convert PDF"**  
+→ Install QPDF/Ghostscript or use Docker
 
-#### ❌ "Failed to convert PDF"
-**Cause:** Corrupted or password-protected PDF  
-**Solution:** Install PDF repair tools ([SETUP.md](SETUP.md))
+**"File too large"**  
+→ Increase limits in `application.properties`
 
-#### ❌ "File too large"
-**Cause:** PDF exceeds 50MB limit  
-**Solution:** Increase limit in `application.properties`:
-```properties
-spring.servlet.multipart.max-file-size=100MB
-spring.servlet.multipart.max-request-size=100MB
-```
+**"Port 8080 in use"**  
+→ Change `server.port` in config
 
-#### ❌ "Job not found"
-**Cause:** Job expired (default: 1 hour)  
-**Solution:** Download files sooner or increase expiry:
-```properties
-app.job.expiry-hours=24
-```
-
-#### ❌ "Port 8080 already in use"
-**Cause:** Another service using port 8080  
-**Solution:** Change port in `application.properties`:
-```properties
-server.port=9090
-```
-
-### Error Codes
-
-| Status Code | Description |
-|------------|-------------|
-| **200** | Success |
-| **400** | Invalid parameters or file format |
-| **404** | Job not found or expired |
-| **413** | File too large |
-| **500** | Internal server error (conversion failed) |
+**"Job not found"**  
+→ Job expired (default 1 hour)
 
 ---
 
-## 📊 Performance
+## Performance
 
-### Benchmarks
 **660-Page PDF:**
-- Without repair tools: ~12s (98% success)
+- Direct conversion: ~12s (98% success)
 - With QPDF: ~20s (100% success)
 - With Ghostscript: ~50s (100% success)
 
-### Optimization Tips
-1. Use lower DPI for previews (150 DPI)
-2. Use JPG for smaller file sizes
-3. Install QPDF for faster PDF repair
-4. Increase JVM heap size for large PDFs:
-   ```bash
-   java -Xmx2g -jar pdf-converter-api.jar
-   ```
+**Optimization:**
+- Use 150 DPI for previews
+- Use JPG for smaller files
+- Docker uses 8 threads automatically
 
 ---
 
-## 📄 License
+## Project Structure
 
-This project is licensed under the MIT License.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
-
----
-
-## 📞 Support
-
-For detailed setup instructions, see [SETUP.md](SETUP.md)
-
-For issues and questions, please open a GitHub issue.
+```
+pdf-converter-java/
+├── src/main/java/com/pdfconverter/
+│   ├── api/               # REST controllers & services
+│   ├── core/              # PDF conversion logic
+│   └── config/            # Spring configuration
+├── src/main/resources/
+│   └── application.properties
+├── Dockerfile             # Docker image definition
+├── docker-compose.yml     # Docker orchestration
+├── pom.xml
+└── README.md
+```
 
 ---
 
-**Made with ❤️ using Spring Boot & Apache PDFBox**
+## License
+
+MIT License
+
+---
+
+**Made with Spring Boot & Apache PDFBox**

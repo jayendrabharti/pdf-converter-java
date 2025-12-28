@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  pdf-converter:
+    build: .
+    container_name: pdf-converter-api
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount local directories for easier file access
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+    environment:
+      # Application settings
+      - SPRING_PROFILES_ACTIVE=docker
+      # Tool paths (already installed in Docker image)
+      - APP_REPAIR_ENABLED=true
+      - APP_REPAIR_QPDF_PATH=/usr/bin/qpdf
+      - APP_REPAIR_GHOSTSCRIPT_PATH=/usr/bin/gs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
