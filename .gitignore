@@ -1,0 +1,119 @@
+############################
+# Build Artifacts
+############################
+target/
+*.class
+*.jar
+*.war
+*.ear
+!.mvn/wrapper/maven-wrapper.jar
+
+############################
+# IDE Files
+############################
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+.metadata
+
+# NetBeans
+nbproject/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+############################
+# Maven
+############################
+.mvn/
+mvnw
+mvnw.cmd
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+############################
+# OS Files
+############################
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+############################
+# Application Directories
+############################
+# PDF uploads and outputs
+uploads/
+outputs/
+
+# Temporary files
+*.tmp
+*.temp
+
+############################
+# Application Files
+############################
+# Test PDFs and output images
+*.pdf
+page-*.jpg
+page-*.png
+page-*.jpeg
+*.tif
+*.tiff
+metadata.json
+
+# Logs
+*.log
+logs/
+spring.log
+
+############################
+# Security & Secrets
+############################
+# Environment files
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.jks
+
+# Application properties with secrets
+application-local.properties
+application-dev.properties
+application-secrets.properties
