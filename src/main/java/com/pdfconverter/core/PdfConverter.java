@@ -2,8 +2,6 @@ package com.pdfconverter.core;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -12,42 +10,31 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Core PDF to Image conversion engine using Apache PDFBox.
- * Optimized with ForkJoinPool for better performance and PDDocument reuse.
+ * Supports multi-threaded conversion for improved performance.
  * Integrates PDF repair for handling problematic PDFs.
  */
-@Component
 public class PdfConverter {
     private final ImageWriter imageWriter;
     private final MetadataGenerator metadataGenerator;
     private final PdfRepairService repairService;
-    private final PdfValidationService validationService;
-    
-    @Value("${app.conversion.min-threads:2}")
-    private int minThreads;
-    
-    @Value("${app.conversion.max-threads:8}")
-    private int maxThreads;
-    
-    @Value("${app.conversion.pages-per-thread:50}")
-    private int pagesPerThread;
-    
-    @Value("${app.repair.skip-threshold-percent:5.0}")
-    private double repairSkipThreshold;
 
-    public PdfConverter(ImageWriter imageWriter, 
-                       MetadataGenerator metadataGenerator,
-                       PdfRepairService repairService,
-                       PdfValidationService validationService) {
-        this.imageWriter = imageWriter;
-        this.metadataGenerator = metadataGenerator;
+    public PdfConverter() {
+        this.imageWriter = new ImageWriter();
+        this.metadataGenerator = new MetadataGenerator();
+        this.repairService = null; // No repair service in basic usage
+    }
+
+    public PdfConverter(PdfRepairService repairService) {
+        this.imageWriter = new ImageWriter();
+        this.metadataGenerator = new MetadataGenerator();
         this.repairService = repairService;
-        this.validationService = validationService;
     }
 
     /**
@@ -64,36 +51,9 @@ public class PdfConverter {
     public Map<String, Object> convertForApi(File inputPdf, File outputDir, int dpi, String format) throws IOException {
         long overallStartTime = System.currentTimeMillis();
         
-        // OPTIMIZATION: Quick validation before loading PDF
-        PdfValidationService.ValidationResult validation = validationService.validatePdf(inputPdf);
-        if (!validation.isValid() && !validation.hasStructureIssues()) {
-            throw new IOException("Invalid PDF: " + validation.getError());
-        }
-        
-        if (validation.isEncrypted()) {
-            System.out.println("⚠ PDF is encrypted - attempting to remove security");
-        }
-        
-        // OPTIMIZATION: Load PDF once and reuse for all attempts
-        PDDocument document = PDDocument.load(inputPdf, 
-            org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
-        document.setAllSecurityToBeRemoved(true);
-        
-        try {
-            // Attempt 1: Direct conversion at requested DPI
-            Map<String, Object> result = attemptConversionWithDocument(document, outputDir, dpi, format, inputPdf.getName());
-            int failedCount = (Integer) result.get("failedPages");
-            int totalPages = (Integer) result.get("totalPages");
-            
-            // OPTIMIZATION: Skip repair if failure rate is below threshold
-            double failurePercentage = (failedCount * 100.0) / totalPages;
-            if (failedCount > 0 && failurePercentage < repairSkipThreshold) {
-                System.out.println(String.format(
-                    "⚡ Skipping repair - only %.1f%% failed (threshold: %.1f%%)",
-                    failurePercentage, repairSkipThreshold));
-                result.put("totalTimeSeconds", (System.currentTimeMillis() - overallStartTime) / 1000.0);
-                return result;
-            }
+        // Attempt 1: Direct conversion at requested DPI
+        Map<String, Object> result = attemptConversion(inputPdf, outputDir, dpi, format);
+        int failedCount = (Integer) result.get("failedPages");
         
         // If there are failures and repair is available, try repair strategies
         if (failedCount > 0 && repairService != null && repairService.isAnyRepairAvailable()) {
@@ -169,21 +129,12 @@ public class PdfConverter {
                 }
             }
         }
-            
-            // Add overall timing
-            long totalTime = System.currentTimeMillis() - overallStartTime;
-            result.put("totalTimeSeconds", totalTime / 1000.0);
-            
-            return result;
-            
-        } finally {
-            // OPTIMIZATION: Close document only once after all attempts
-            try {
-                document.close();
-            } catch (IOException e) {
-                System.err.println("Warning: Failed to close PDF document: " + e.getMessage());
-            }
-        }
+        
+        // Add overall timing
+        long totalTime = System.currentTimeMillis() - overallStartTime;
+        result.put("totalTimeSeconds", totalTime / 1000.0);
+        
+        return result;
     }
     
     /**
@@ -210,10 +161,18 @@ public class PdfConverter {
     }
     
     /**
-     * Attempt conversion with provided PDDocument (OPTIMIZED - no reload).
+     * Attempt conversion without repair.
      */
-    private Map<String, Object> attemptConversionWithDocument(PDDocument document, File outputDir, int dpi, String format, String pdfFileName) throws IOException {
+    private Map<String, Object> attemptConversion(File inputPdf, File outputDir, int dpi, String format) throws IOException {
         long startTime = System.currentTimeMillis();
+
+        PDDocument document = null;
+        try {
+            // Load PDF with lenient mode to handle malformed PDFs
+            document = PDDocument.load(inputPdf, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
+            
+            // Set lenient parsing to handle structure issues
+            document.setAllSecurityToBeRemoved(true);
             
             int totalPages = document.getNumberOfPages();
 
@@ -231,65 +190,64 @@ public class PdfConverter {
             // Track failed pages
             List<String> failedPages = new ArrayList<>();
 
-            // OPTIMIZATION: Adaptive thread count with configurable limits
+            // Adaptive thread count based on page count
+            // Small PDFs (< 50 pages): 2 threads
+            // Medium PDFs (50-200 pages): 4 threads  
+            // Large PDFs (200-500 pages): 6 threads
+            // Huge PDFs (> 500 pages): 8 threads
+            // Never exceed available processors
             int numThreads = Math.min(
-                Math.max(totalPages / pagesPerThread, minThreads),
-                Math.min(maxThreads, Runtime.getRuntime().availableProcessors())
+                Math.max(totalPages / 50, 2),  // 1 thread per 50 pages, minimum 2
+                Math.min(8, Runtime.getRuntime().availableProcessors())  // Max 8, or CPU count
             );
             
-            System.out.println("Processing " + totalPages + " pages with " + numThreads + " threads (ForkJoinPool)");
+            System.out.println("Processing " + totalPages + " pages with " + numThreads + " threads");
             
-            // OPTIMIZATION: Use ForkJoinPool for better work-stealing
-            ForkJoinPool executor = new ForkJoinPool(numThreads);
+            ExecutorService executor = Executors.newFixedThreadPool(numThreads);
             AtomicInteger processedPages = new AtomicInteger(0);
             AtomicInteger successfulPages = new AtomicInteger(0);
 
-            // Submit conversion tasks to ForkJoinPool
-            try {
+            // Submit conversion tasks
+            for (int i = 0; i < totalPages; i++) {
+                final int pageIndex = i;
+                final int pageNumber = i + 1;
+
                 executor.submit(() -> {
-                    for (int i = 0; i < totalPages; i++) {
-                        final int pageIndex = i;
-                        final int pageNumber = i + 1;
-                        try {
-                            // Try with requested DPI only (no premature fallback)
-                            BufferedImage image = pdfRenderer.renderImageWithDPI(pageIndex, dpi);
-                            String filename = imageWriter.generateFilename(pageNumber, format);
-                            File outputFile = new File(outputDir, filename);
-                            long fileSize = imageWriter.writeImage(image, outputFile, format);
+                    try {
+                        // Try with requested DPI only (no premature fallback)
+                        BufferedImage image = pdfRenderer.renderImageWithDPI(pageIndex, dpi);
+                        String filename = imageWriter.generateFilename(pageNumber, format);
+                        File outputFile = new File(outputDir, filename);
+                        long fileSize = imageWriter.writeImage(image, outputFile, format);
 
-                            synchronized (fileSizes) {
-                                fileSizes.add(metadataGenerator.createFileInfo(filename, fileSize, outputFile.getAbsolutePath()));
-                            }
-
-                            successfulPages.incrementAndGet();
-                        } catch (Exception e) {
-                            // Page failed - will be handled by repair service
-                            String errorMsg = "Page " + pageNumber + ": " + e.getMessage();
-                            System.err.println("Error processing " + errorMsg);
-                            synchronized (failedPages) {
-                                failedPages.add(errorMsg);
-                            }
+                        synchronized (fileSizes) {
+                            fileSizes.add(metadataGenerator.createFileInfo(filename, fileSize, outputFile.getAbsolutePath()));
                         }
-                        
-                        processedPages.incrementAndGet();
+
+                        successfulPages.incrementAndGet();
+                    } catch (Exception e) {
+                        // Page failed - will be handled by repair service
+                        String errorMsg = "Page " + pageNumber + ": " + e.getMessage();
+                        System.err.println("Error processing " + errorMsg);
+                        synchronized (failedPages) {
+                            failedPages.add(errorMsg);
+                        }
                     }
-                }).get(); // Wait for completion
-            } catch (Exception e) {
-                throw new IOException("Conversion task failed", e);
-            } finally {
-                // Shutdown ForkJoinPool
-                executor.shutdown();
-                try {
-                    if (!executor.awaitTermination(1, TimeUnit.HOURS)) {
-                        executor.shutdownNow();
-                        throw new IOException("Conversion timed out");
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    executor.shutdownNow();
-                    throw new IOException("Conversion interrupted", e);
-                }
+                    
+                    processedPages.incrementAndGet();
+                });
             }
+
+            // Shutdown and wait for ALL threads to complete
+            executor.shutdown();
+            boolean completed = executor.awaitTermination(1, TimeUnit.HOURS);
+            
+            if (!completed) {
+                executor.shutdownNow();
+                throw new IOException("Conversion timed out");
+            }
+            
+            // NOW it's safe - all threads are done, document can be closed in finally
 
             // Calculate time
             long endTime = System.currentTimeMillis();
@@ -303,7 +261,7 @@ public class PdfConverter {
                     timeTaken,
                     dpi,
                     format,
-                    pdfFileName,
+                    inputPdf.getName(),
                     fileSizes,
                     failedPages
             );
@@ -324,15 +282,106 @@ public class PdfConverter {
             }
 
             return metadata;
-        // NOTE: Document is NOT closed here - handled by caller for reuse
+
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Conversion interrupted", e);
+        } finally {
+            if (document != null) {
+                try {
+                    document.close();
+                } catch (IOException e) {
+                    System.err.println("Warning: Failed to close PDF document: " + e.getMessage());
+                }
+            }
+        }
     }
     
+    /**
+     * Last resort: Retry failed pages with lower DPI (72).
+     * Only used after repair attempts fail.
+     */
+    private Map<String, Object> attemptConversionWithFallbackDPI(File inputPdf, File outputDir, int originalDpi, 
+                                                                  String format, Map<String, Object> previousResult) throws IOException {
+        @SuppressWarnings("unchecked")
+        List<String> previousErrors = (List<String>) previousResult.get("errors");
+        if (previousErrors == null || previousErrors.isEmpty()) {
+            return previousResult;
+        }
+
+        PDDocument document = null;
+        try {
+            document = PDDocument.load(inputPdf, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
+            document.setAllSecurityToBeRemoved(true);
+
+            PDFRenderer pdfRenderer = new PDFRenderer(document);
+            
+            @SuppressWarnings("unchecked")
+            List<MetadataGenerator.FileInfo> existingFiles = (List<MetadataGenerator.FileInfo>) previousResult.get("files");
+            int recoveredCount = 0;
+            
+            List<String> stillFailing = new ArrayList<>();
+            
+            // Only retry pages that previously failed
+            for (String errorMsg : previousErrors) {
+                // Extract page number from error message "Page X: ..."
+                try {
+                    int colonIndex = errorMsg.indexOf(':');
+                    if (colonIndex > 0) {
+                        String pageStr = errorMsg.substring(5, colonIndex).trim();
+                        int pageNumber = Integer.parseInt(pageStr);
+                        int pageIndex = pageNumber - 1;
+                        
+                        // Try rendering at 72 DPI
+                        BufferedImage image = pdfRenderer.renderImageWithDPI(pageIndex, 72);
+                        String filename = imageWriter.generateFilename(pageNumber, format);
+                        File outputFile = new File(outputDir, filename);
+                        long fileSize = imageWriter.writeImage(image, outputFile, format);
+                        
+                        existingFiles.add(metadataGenerator.createFileInfo(filename, fileSize, outputFile.getAbsolutePath()));
+                        recoveredCount++;
+                        
+                        System.out.println("✓ Page " + pageNumber + " recovered at 72 DPI");
+                    }
+                } catch (Exception e) {
+                    stillFailing.add(errorMsg + " (72 DPI also failed)");
+                }
+            }
+            
+            // Update result
+            int successfulPages = (Integer) previousResult.get("successfulPages") + recoveredCount;
+            previousResult.put("successfulPages", successfulPages);
+            previousResult.put("failedPages", stillFailing.size());
+            previousResult.put("files", existingFiles);
+            
+            if (!stillFailing.isEmpty()) {
+                previousResult.put("errors", stillFailing);
+            } else {
+                previousResult.remove("errors");
+            }
+            
+            if (recoveredCount > 0) {
+                System.out.println("✓ Recovered " + recoveredCount + " page(s) using 72 DPI fallback");
+            }
+            
+            return previousResult;
+            
+        } finally {
+            if (document != null) {
+                try {
+                    document.close();
+                } catch (IOException e) {
+                    System.err.println("Warning: Failed to close PDF document: " + e.getMessage());
+                }
+            }
+        }
+    }
     
     /**
      * Retry only specific failed pages after repair (OPTIMIZATION).
      * This avoids re-rendering successful pages.
      */
-    private Map<String, Object> retryFailedPagesOnly(File pdfFile, File outputDir, int dpi, 
+    private Map<String, Object> retryFailedPagesOnly(File repairedPdf, File outputDir, int dpi, 
                                                       String format, List<Integer> failedPageNumbers,
                                                       Map<String, Object> previousResult) throws IOException {
         if (failedPageNumbers.isEmpty()) {
@@ -343,7 +392,7 @@ public class PdfConverter {
         
         PDDocument document = null;
         try {
-            document = PDDocument.load(pdfFile, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
+            document = PDDocument.load(repairedPdf, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
             document.setAllSecurityToBeRemoved(true);
 
             PDFRenderer pdfRenderer = new PDFRenderer(document);
@@ -403,7 +452,7 @@ public class PdfConverter {
      * Retry failed pages at 72 DPI (OPTIMIZATION).
      * Only processes pages that are still failing.
      */
-    private Map<String, Object> retryFailedPagesAt72DPI(File pdfFile, File outputDir, String format,
+    private Map<String, Object> retryFailedPagesAt72DPI(File inputPdf, File outputDir, String format,
                                                          List<Integer> failedPageNumbers,
                                                          Map<String, Object> previousResult) throws IOException {
         if (failedPageNumbers.isEmpty()) {
@@ -412,7 +461,7 @@ public class PdfConverter {
 
         PDDocument document = null;
         try {
-            document = PDDocument.load(pdfFile, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
+            document = PDDocument.load(inputPdf, org.apache.pdfbox.io.MemoryUsageSetting.setupTempFileOnly());
             document.setAllSecurityToBeRemoved(true);
 
             PDFRenderer pdfRenderer = new PDFRenderer(document);

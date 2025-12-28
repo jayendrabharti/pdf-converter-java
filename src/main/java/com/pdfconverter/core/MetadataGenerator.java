@@ -15,7 +15,6 @@ import java.util.List;
  */
 public class MetadataGenerator {
 
-    @SuppressWarnings("unused") // Fields used by Gson for JSON serialization
     public static class Metadata {
         private final int totalPages;
         private final int successfulPages;

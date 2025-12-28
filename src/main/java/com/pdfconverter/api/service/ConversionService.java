@@ -2,6 +2,7 @@ package com.pdfconverter.api.service;
 
 import com.pdfconverter.api.model.Job;
 import com.pdfconverter.core.PdfConverter;
+import com.pdfconverter.core.PdfRepairService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -22,7 +23,7 @@ public class ConversionService {
     private JobManager jobManager;
 
     @Autowired
-    private PdfConverter pdfConverter;
+    private PdfRepairService pdfRepairService;
 
     /**
      * Converts a PDF file to images.
@@ -36,8 +37,9 @@ public class ConversionService {
         // Create output directory
         File outputDir = fileStorageService.createOutputDirectory(job.getJobId());
 
-        // Perform conversion (PdfConverter is now a Spring bean with all dependencies injected)
-        Map<String, Object> metadata = pdfConverter.convertForApi(
+        // Perform conversion with repair service
+        PdfConverter converter = new PdfConverter(pdfRepairService);
+        Map<String, Object> metadata = converter.convertForApi(
                 inputPdf,
                 outputDir,
                 job.getDpi(),
@@ -50,4 +52,3 @@ public class ConversionService {
         return metadata;
     }
 }
-
